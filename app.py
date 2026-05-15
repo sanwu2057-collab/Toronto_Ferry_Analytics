@@ -87,6 +87,54 @@ st.subheader('Passenger Flow Heatmap')
 heat=f.pivot_table(values='Sales Count',index='Day',columns='Hour',aggfunc='sum')
 st.plotly_chart(px.imshow(heat,text_auto=True),use_container_width=True)
 
+st.subheader('Daily Passenger Trend')
+daily=f.groupby('Date')[['Sales Count','Redemption Count']].sum().reset_index()
+st.plotly_chart(
+    px.line(
+        daily,
+        x='Date',
+        y=['Sales Count','Redemption Count'],
+        markers=True,
+        title='Daily Passenger Movement Trend'
+    ),
+    use_container_width=True
+)
+
+st.subheader('Net Passenger Movement Analysis')
+netdf=f.groupby('Hour')['Net Movement'].sum().reset_index()
+st.plotly_chart(
+    px.area(
+        netdf,
+        x='Hour',
+        y='Net Movement',
+        title='Net Passenger Flow by Hour'
+    ),
+    use_container_width=True
+)
+
+st.subheader('Day-wise Demand Distribution')
+daydf=f.groupby('Day')['Sales Count'].sum().reset_index()
+st.plotly_chart(
+    px.bar(
+        daydf,
+        x='Day',
+        y='Sales Count',
+        color='Sales Count',
+        title='Demand by Day'
+    ),
+    use_container_width=True
+)
+
+st.subheader('Sales Distribution')
+st.plotly_chart(
+    px.box(
+        f,
+        y='Sales Count',
+        title='Passenger Ticket Distribution'
+    ),
+    use_container_width=True
+)
+
 st.subheader('Operational Insights')
 st.success(f'Peak demand occurs around {peak}:00')
 st.info('Increase staffing and ferry frequency during peak periods.')
