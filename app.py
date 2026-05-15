@@ -1,481 +1,95 @@
 import streamlit as st
 import pandas as pd
-import numpy as np
 import plotly.express as px
 import plotly.graph_objects as go
-from plotly.subplots import make_subplots
+import datetime
 
 st.set_page_config(
-    page_title="Toronto Island Ferry Analytics",
-    page_icon="⛴️",
-    layout="wide"
+    page_title='Toronto Ferry Executive Dashboard',
+    page_icon='⛴️',
+    layout='wide'
 )
 
-# =========================
-# LOAD DATA
-# =========================
+st.title('⛴️ Toronto Island Ferry Executive Analytics Dashboard')
+st.caption('Senior Analyst Edition: Passenger Flow & Operational Intelligence')
+
 @st.cache_data
 def load_data(file):
-    df = pd.read_excel(file)
+    try:
+        df=pd.read_excel(file)
 
-    # Rename columns for consistency
-    df.columns = [
-        "_id",
-        "Timestamp",
-        "Redemption_Count",
-        "Sales_Count"
-    ]
+        # datetime.time fix
+        for col in df.columns:
+            if df[col].dtype=='object':
+                sample=df[col].dropna().iloc[0] if not df[col].dropna().empty else None
+                if isinstance(sample,datetime.time):
+                    df[col]=df[col].astype(str)
 
-    # Convert datetime
-    df["Timestamp"] = pd.to_datetime(df["Timestamp"])
+        # adjust Timestamp column name if needed
+        time_col='Timestamp'
+        dt=pd.to_datetime(df[time_col],errors='coerce')
 
-    # Sort chronologically
-    df = df.sort_values("Timestamp")
+        df['Hour']=dt.dt.hour
+        df['Date']=dt.dt.date
+        df['Day']=dt.dt.day_name()
+        df['Month']=dt.dt.month_name()
+        df['Time']=dt.dt.strftime('%H:%M:%S')
 
-    # Handle missing values
-    df["Sales_Count"] = df["Sales_Count"].fillna(0)
-    df["Redemption_Count"] = df["Redemption_Count"].fillna(0)
+        # Example metrics
+        if 'Sales Count' in df.columns and 'Redemption Count' in df.columns:
+            df['Net Movement']=df['Sales Count']-df['Redemption Count']
 
-    # Feature Engineering
-    df["Hour"] = df["Timestamp"].dt.hour
-    df["Date"] = df["Timestamp"].dt.date
-    df["Day_Name"] = df["Timestamp"].dt.day_name()
-    df["Month"] = df["Timestamp"].dt.month_name()
-    df["Weekday"] = df["Timestamp"].dt.weekday
+        return df
 
-    df["Weekend_Weekday"] = np.where(
-        df["Weekday"] >= 5,
-        "Weekend",
-        "Weekday"
-    )
+    except Exception as e:
+        st.error(f'Error: {e}')
+        st.stop()
 
-    # Seasons
-    def get_season(month):
-        if month in [12, 1, 2]:
-            return "Winter"
-        elif month in [3, 4, 5]:
-            return "Spring"
-        elif month in [6, 7, 8]:
-            return "Summer"
-        else:
-            return "Fall"
+uploaded=st.sidebar.file_uploader('Upload Ferry Dataset',type=['xlsx','csv'])
+if uploaded is None:
+    st.info('Upload Toronto Island Ferry file')
+    st.stop()
 
-    df["Season"] = df["Timestamp"].dt.month.apply(get_season)
+df=load_data(uploaded)
 
-    # KPI Metrics
-    df["Net_Movement"] = (
-        df["Sales_Count"] - df["Redemption_Count"]
-    )
-
-    # Rolling Averages
-    df["Sales_Rolling_1H"] = (
-        df["Sales_Count"]
-        .rolling(window=4, min_periods=1)
-        .mean()
-    )
-
-    df["Sales_Rolling_4H"] = (
-        df["Sales_Count"]
-        .rolling(window=16, min_periods=1)
-        .mean()
-    )
-
-    return df
-
-
-# =========================
-# SIDEBAR
-# =========================
-st.sidebar.title("⛴️ Toronto Island Ferry Analytics")
-
-uploaded_file = st.sidebar.file_uploader(
-    "Upload Ferry Ticket Dataset",
-    type=["xlsx", "csv"]
+locations=st.sidebar.multiselect(
+    'Day Filter',
+    df['Day'].dropna().unique(),
+    default=df['Day'].dropna().unique()
 )
 
-if uploaded_file is not None:
-
-    if uploaded_file.name.endswith(".csv"):
-        df = pd.read_csv(uploaded_file)
-    else:
-        df = load_data(uploaded_file)
-
-        # If uploaded from xlsx already processed
-        if "_id" not in df.columns:
-            df = load_data(uploaded_file)
-
-    # =========================
-    # FILTERS
-    # =========================
-    st.sidebar.header("Filters")
-
-    min_date = df["Timestamp"].min().date()
-    max_date = df["Timestamp"].max().date()
-
-    date_range = st.sidebar.date_input(
-        "Select Date Range",
-        [min_date, max_date]
-    )
-
-    selected_season = st.sidebar.multiselect(
-        "Select Season",
-        options=df["Season"].unique(),
-        default=df["Season"].unique()
-    )
-
-    selected_day_type = st.sidebar.multiselect(
-        "Weekend / Weekday",
-        options=df["Weekend_Weekday"].unique(),
-        default=df["Weekend_Weekday"].unique()
-    )
-
-    # Filter Data
-    filtered_df = df[
-        (df["Timestamp"].dt.date >= date_range[0]) &
-        (df["Timestamp"].dt.date <= date_range[1]) &
-        (df["Season"].isin(selected_season)) &
-        (df["Weekend_Weekday"].isin(selected_day_type))
-    ]
-
-    # =========================
-    # HEADER
-    # =========================
-    st.title("⛴️ Real-Time Ferry Ticket Sales & Redemption Analytics")
-    st.markdown("""
-    Analytics Dashboard for Toronto Island Park Ferry Operations
-    """)
-
-    # =========================
-    # KPI CARDS
-    # =========================
-    total_sales = int(filtered_df["Sales_Count"].sum())
-    total_redemptions = int(filtered_df["Redemption_Count"].sum())
-    net_movement = int(filtered_df["Net_Movement"].sum())
-
-    peak_hour = (
-        filtered_df.groupby("Hour")["Sales_Count"]
-        .sum()
-        .idxmax()
-    )
-
-    col1, col2, col3, col4 = st.columns(4)
-
-    col1.metric(
-        "🎫 Total Tickets Sold",
-        f"{total_sales:,}"
-    )
-
-    col2.metric(
-        "✅ Total Tickets Redeemed",
-        f"{total_redemptions:,}"
-    )
-
-    col3.metric(
-        "📊 Net Passenger Movement",
-        f"{net_movement:,}"
-    )
-
-    col4.metric(
-        "⏰ Peak Demand Hour",
-        f"{peak_hour}:00"
-    )
-
-    st.markdown("---")
-
-    # =========================
-    # TIME SERIES ANALYSIS
-    # =========================
-    st.subheader("📈 Ticket Sales vs Redemptions Over Time")
-
-    fig = go.Figure()
-
-    fig.add_trace(
-        go.Scatter(
-            x=filtered_df["Timestamp"],
-            y=filtered_df["Sales_Count"],
-            mode="lines",
-            name="Sales Count"
-        )
-    )
-
-    fig.add_trace(
-        go.Scatter(
-            x=filtered_df["Timestamp"],
-            y=filtered_df["Redemption_Count"],
-            mode="lines",
-            name="Redemption Count"
-        )
-    )
-
-    fig.update_layout(
-        height=500,
-        xaxis_title="Timestamp",
-        yaxis_title="Count",
-        hovermode="x unified"
-    )
-
-    st.plotly_chart(fig, use_container_width=True)
-
-    # =========================
-    # HOURLY DEMAND
-    # =========================
-    col1, col2 = st.columns(2)
-
-    with col1:
-        st.subheader("🕒 Hourly Demand Trend")
-
-        hourly = (
-            filtered_df.groupby("Hour")[
-                ["Sales_Count", "Redemption_Count"]
-            ]
-            .sum()
-            .reset_index()
-        )
-
-        fig_hour = px.line(
-            hourly,
-            x="Hour",
-            y=["Sales_Count", "Redemption_Count"],
-            markers=True
-        )
-
-        fig_hour.update_layout(height=450)
-
-        st.plotly_chart(
-            fig_hour,
-            use_container_width=True
-        )
-
-    # =========================
-    # DAILY TREND
-    # =========================
-    with col2:
-        st.subheader("📅 Daily Passenger Trend")
-
-        daily = (
-            filtered_df.groupby("Date")[
-                ["Sales_Count", "Redemption_Count"]
-            ]
-            .sum()
-            .reset_index()
-        )
-
-        fig_daily = px.area(
-            daily,
-            x="Date",
-            y=["Sales_Count", "Redemption_Count"]
-        )
-
-        fig_daily.update_layout(height=450)
-
-        st.plotly_chart(
-            fig_daily,
-            use_container_width=True
-        )
-
-    # =========================
-    # SEASONAL ANALYSIS
-    # =========================
-    st.subheader("🌦️ Seasonal Comparison")
-
-    seasonal = (
-        filtered_df.groupby("Season")[
-            ["Sales_Count", "Redemption_Count"]
-        ]
-        .sum()
-        .reset_index()
-    )
-
-    fig_season = px.bar(
-        seasonal,
-        x="Season",
-        y=["Sales_Count", "Redemption_Count"],
-        barmode="group"
-    )
-
-    st.plotly_chart(
-        fig_season,
-        use_container_width=True
-    )
-
-    # =========================
-    # WEEKEND VS WEEKDAY
-    # =========================
-    col1, col2 = st.columns(2)
-
-    with col1:
-        st.subheader("📌 Weekend vs Weekday")
-
-        ww = (
-            filtered_df.groupby("Weekend_Weekday")[
-                ["Sales_Count", "Redemption_Count"]
-            ]
-            .sum()
-            .reset_index()
-        )
-
-        fig_ww = px.pie(
-            ww,
-            names="Weekend_Weekday",
-            values="Sales_Count",
-            hole=0.4
-        )
-
-        st.plotly_chart(
-            fig_ww,
-            use_container_width=True
-        )
-
-    # =========================
-    # NET MOVEMENT
-    # =========================
-    with col2:
-        st.subheader("🚶 Net Passenger Movement")
-
-        net_df = (
-            filtered_df.groupby("Date")["Net_Movement"]
-            .sum()
-            .reset_index()
-        )
-
-        fig_net = px.bar(
-            net_df,
-            x="Date",
-            y="Net_Movement"
-        )
-
-        st.plotly_chart(
-            fig_net,
-            use_container_width=True
-        )
-
-    # =========================
-    # ROLLING AVERAGES
-    # =========================
-    st.subheader("📉 Rolling Average Analysis")
-
-    fig_roll = go.Figure()
-
-    fig_roll.add_trace(
-        go.Scatter(
-            x=filtered_df["Timestamp"],
-            y=filtered_df["Sales_Rolling_1H"],
-            mode="lines",
-            name="1 Hour Rolling Avg"
-        )
-    )
-
-    fig_roll.add_trace(
-        go.Scatter(
-            x=filtered_df["Timestamp"],
-            y=filtered_df["Sales_Rolling_4H"],
-            mode="lines",
-            name="4 Hour Rolling Avg"
-        )
-    )
-
-    fig_roll.update_layout(
-        height=500,
-        hovermode="x unified"
-    )
-
-    st.plotly_chart(
-        fig_roll,
-        use_container_width=True
-    )
-
-    # =========================
-    # PEAK ANALYSIS
-    # =========================
-    st.subheader("🔥 Peak vs Off-Peak Analysis")
-
-    peak_threshold = (
-        filtered_df["Sales_Count"]
-        .quantile(0.75)
-    )
-
-    filtered_df["Demand_Type"] = np.where(
-        filtered_df["Sales_Count"] >= peak_threshold,
-        "Peak",
-        "Off-Peak"
-    )
-
-    peak_summary = (
-        filtered_df.groupby("Demand_Type")[
-            ["Sales_Count", "Redemption_Count"]
-        ]
-        .mean()
-        .reset_index()
-    )
-
-    fig_peak = px.bar(
-        peak_summary,
-        x="Demand_Type",
-        y=["Sales_Count", "Redemption_Count"],
-        barmode="group"
-    )
-
-    st.plotly_chart(
-        fig_peak,
-        use_container_width=True
-    )
-
-    # =========================
-    # DATA TABLE
-    # =========================
-    st.subheader("📄 Detailed Data Table")
-
-    st.dataframe(
-        filtered_df,
-        use_container_width=True
-    )
-
-    # =========================
-    # INSIGHTS SECTION
-    # =========================
-    st.subheader("🧠 Operational Insights")
-
-    busiest_day = (
-        filtered_df.groupby("Day_Name")["Sales_Count"]
-        .sum()
-        .idxmax()
-    )
-
-    busiest_season = (
-        filtered_df.groupby("Season")["Sales_Count"]
-        .sum()
-        .idxmax()
-    )
-
-    st.success(
-        f"""
-        • Peak demand occurs around {peak_hour}:00 hours.
-        
-        • Highest passenger traffic observed during {busiest_season}.
-        
-        • Busiest operational day is {busiest_day}.
-        
-        • Net passenger movement helps estimate congestion levels.
-        
-        • Rolling averages indicate sustained traffic trends for scheduling decisions.
-        """
-    )
-
-else:
-    st.title("⛴️ Toronto Island Ferry Analytics Dashboard")
-
-    st.info(
-        "Upload the Toronto Island Ferry dataset to begin analysis."
-    )
-
-    st.markdown("""
-    ### Features Included
-
-    ✅ Real-Time KPI Cards  
-    ✅ Interactive Time-Series Analysis  
-    ✅ Peak vs Off-Peak Detection  
-    ✅ Seasonal Trend Analysis  
-    ✅ Rolling Average Analytics  
-    ✅ Net Passenger Movement Tracking  
-    ✅ Operational Insights  
-    """)
+f=df[df['Day'].isin(locations)]
+
+sales=f['Sales Count'].sum()
+redeem=f['Redemption Count'].sum()
+net=f['Net Movement'].sum()
+peak=f.groupby('Hour')['Sales Count'].sum().idxmax()
+
+c1,c2,c3,c4=st.columns(4)
+c1.metric('Total Sales',f'{sales:,.0f}')
+c2.metric('Redemptions',f'{redeem:,.0f}')
+c3.metric('Net Passenger Flow',f'{net:,.0f}')
+c4.metric('Peak Hour',f'{peak}:00')
+
+left,right=st.columns(2)
+with left:
+    hr=f.groupby('Hour')['Sales Count'].sum().reset_index()
+    st.plotly_chart(px.line(hr,x='Hour',y='Sales Count',markers=True,title='Passenger Demand by Hour'),use_container_width=True)
+
+with right:
+    compare=f.groupby('Hour')[['Sales Count','Redemption Count']].sum().reset_index()
+    fig=go.Figure()
+    fig.add_bar(x=compare['Hour'],y=compare['Sales Count'],name='Sales')
+    fig.add_bar(x=compare['Hour'],y=compare['Redemption Count'],name='Redemptions')
+    st.plotly_chart(fig,use_container_width=True)
+
+st.subheader('Passenger Flow Heatmap')
+heat=f.pivot_table(values='Sales Count',index='Day',columns='Hour',aggfunc='sum')
+st.plotly_chart(px.imshow(heat,text_auto=True),use_container_width=True)
+
+st.subheader('Operational Insights')
+st.success(f'Peak demand occurs around {peak}:00')
+st.info('Increase staffing and ferry frequency during peak periods.')
+st.warning('Monitor high net movement periods for crowd management.')
+
+st.dataframe(f,use_container_width=True)
